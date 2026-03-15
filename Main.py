@@ -1,96 +1,106 @@
-import os
-import asyncio
-import edge_tts
-import logging
-import subprocess
+import os, asyncio, edge_tts, subprocess, requests, logging
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler, CommandHandler
 
-# --- HEALTH CHECK (Si uusan Render u damin) ---
+# --- HEALTH CHECK ---
 app = Flask('')
 @app.route('/')
 def home(): return "Bot-ka Liibaan waa Live!"
-
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive(): Thread(target=run).start()
 
 # --- CONFIG ---
 TOKEN = "8666395712:AAHWOsgjApdKsUNFddeWvbQEx7EyBoy6xI4"
-ADMIN_USERNAME = "@Liibaantech"
+GROQ_API_KEY = "Gsk_mcqTsFbIaNys0SmGQbZJWGdyb3FY3vYKvky7uRu51jv05wPdJzwv"
 
 logging.basicConfig(level=logging.INFO)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("✍️ Qoraal Cod u beddel", callback_data='mode_tts')],
-                [InlineKeyboardButton("🎥 Muuqaal ii turjum", callback_data='mode_translate')]]
-    await update.message.reply_text(f"👋 War dhowow {update.effective_user.first_name}!\nDooro mid:", reply_markup=InlineKeyboardMarkup(keyboard))
+# Qalabka turjumada (Google Translate Free API)
+def translate_to_somali(text):
+    try:
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=so&dt=t&q={text}"
+        r = requests.get(url)
+        return "".join([s[0] for s in r.json()[0]])
+    except:
+        return text # Haddii turjumadu fashilanto, hadalkii asalka ahaa uun isticmaal
 
-async def handle_interaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton("👩‍💼 Ubax (Dheddig)", callback_data='v_so-SO-UbaxNeural'), 
+                 InlineKeyboardButton("👨‍💼 Muuse (Lab)", callback_data='v_so-SO-MuuseNeural')]]
+    await update.message.reply_text("👋 War dhowow! Dooro codka Soomaaliga ah ee lagu turjumayo:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def set_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if query.data.startswith('mode_'):
-        context.user_data['mode'] = query.data.replace('mode_', '')
-        keyboard = [[InlineKeyboardButton("👩‍💼 Ubax", callback_data='v_so-SO-UbaxNeural'), 
-                     InlineKeyboardButton("👨‍💼 Muuse", callback_data='v_so-SO-MuuseNeural')]]
-        await query.edit_message_text("Dooro Codka Soomaaliga:", reply_markup=InlineKeyboardMarkup(keyboard))
-    elif query.data.startswith('v_'):
-        context.user_data['voice'] = query.data.replace('v_', '')
-        mode = context.user_data.get('mode', 'tts')
-        msg = "✍️ Soo dir qoraal:" if mode == 'tts' else "🎥 Soo dir Video (Ka yar 10MB):"
-        await query.edit_message_text(f"✅ Diyaar waaye. {msg}")
+    context.user_data['voice'] = query.data.replace('v_', '')
+    await query.edit_message_text("✅ Diyaar! Hadda ii soo dir Video-ga Ingiriiska ah. Waxaan u turjumayaa Soomaali si automatic ah.")
 
-async def process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    mode = context.user_data.get('mode')
     voice = context.user_data.get('voice', 'so-SO-MuuseNeural')
+    wait = await update.message.reply_text("🎧 AI-ga ayaa dhageysanaya hadalka video-ga...")
     
-    if mode == 'translate' and update.message.video:
-        wait = await update.message.reply_text("⏳ Farsamaynta waa la bilaabay... (Fadlan sug)")
-        v_in, a_som, v_out = f"i_{user_id}.mp4", f"a_{user_id}.mp3", f"o_{user_id}.mp4"
+    v_in, a_orig, a_som, v_out = f"i_{user_id}.mp4", f"a_{user_id}.mp3", f"s_{user_id}.mp3", f"o_{user_id}.mp4"
+
+    try:
+        # 1. Download Video
+        file = await update.message.video.get_file()
+        await file.download_to_drive(v_in)
+
+        # 2. Extract Audio
+        subprocess.run(['ffmpeg', '-y', '-i', v_in, '-ar', '16000', '-ac', '1', '-map', 'a', a_orig], check=True)
+
+        # 3. Whisper AI (Dhageysiga hadalka Ingiriiska ah)
+        with open(a_orig, "rb") as audio_file:
+            headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+            files = {"file": audio_file, "model": (None, "whisper-large-v3"), "language": (None, "en")}
+            response = requests.post("https://api.groq.com/openai/v1/audio/transcriptions", headers=headers, files=files)
+            english_text = response.json().get('text', '')
+
+        if not english_text:
+            await update.message.reply_text("⚠️ Wax hadal ah kama maqal video-ga.")
+            return
+
+        await wait.edit_text(f"📝 Ingiriis: {english_text[:60]}...\n\n🔄 Hadda waxaan u turjumayaa Soomaali...")
+
+        # 4. Turjumid (English to Somali)
+        somali_text = translate_to_somali(english_text)
+
+        # 5. Samee Codka Soomaaliga ah
+        communicate = edge_tts.Communicate(somali_text, voice)
+        await communicate.save(a_som)
+
+        # 6. FFmpeg: Isku dar Video + Codka Soomaaliga (Tirtir codkii hore)
+        # Waxaan sidoo kale yaraynaynaa tayada si Render uusan u crash-gareyn
+        cmd = [
+            'ffmpeg', '-y', '-i', v_in, '-i', a_som,
+            '-map', '0:v:0', '-map', '1:a:0', 
+            '-c:v', 'copy', '-c:a', 'aac', '-shortest', v_out
+        ]
+        subprocess.run(cmd, check=True)
+
+        await update.message.reply_video(video=open(v_out, 'rb'), caption=f"✅ Turjumadii: {somali_text[:100]}...\n\nBy: @Liibaantech")
         
-        try:
-            file = await update.message.video.get_file()
-            await file.download_to_drive(v_in)
-            
-            # 1. Samee Codka Soomaaliga ah
-            text_to_say = "Kani waa muuqaal turjuman oo uu diyaariyay Liibaan Tik."
-            communicate = edge_tts.Communicate(text_to_say, voice)
-            await communicate.save(a_som)
-            
-            # 2. FFmpeg: Tirtir codkii hore, ku dar kan Soomaaliga (Aad u fudud)
-            cmd = [
-                'ffmpeg', '-y', '-i', v_in, '-i', a_som,
-                '-map', '0:v:0', '-map', '1:a:0', 
-                '-c:v', 'copy', '-c:a', 'aac', '-shortest', v_out
-            ]
-            subprocess.run(cmd, check=True)
-
-            await update.message.reply_video(video=open(v_out, 'rb'), caption=f"✅ Lagu guuleystay!\nBy: {ADMIN_USERNAME}")
-        except Exception as e:
-            logging.error(f"Error: {e}")
-            await update.message.reply_text("❌ Cilad baa dhacday. Video-gu waa inuu aad u yar yahay (10MB ka yar).")
-        finally:
-            for f in [v_in, a_som, v_out]:
-                if os.path.exists(f): os.remove(f)
-            await wait.delete()
-
-    elif mode == 'tts' and update.message.text:
-        path = f"t_{user_id}.mp3"
-        await edge_tts.Communicate(update.message.text, voice).save(path)
-        await update.message.reply_voice(voice=open(path, 'rb'))
-        if os.path.exists(path): os.remove(path)
+    except Exception as e:
+        logging.error(e)
+        await update.message.reply_text(f"❌ Khalad: Muuqaalka ayaa aad u weyn ama server-ka ayaa mashquul ah.")
+    finally:
+        for f in [v_in, a_orig, a_som, v_out]:
+            if os.path.exists(f): os.remove(f)
+        await wait.delete()
 
 def main():
     keep_alive()
     app_bot = Application.builder().token(TOKEN).build()
     app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(CallbackQueryHandler(handle_interaction))
-    app_bot.add_handler(MessageHandler(filters.TEXT | filters.VIDEO, process))
-    app_bot.run_polling(drop_pending_updates=True)
+    app_bot.add_handler(CallbackQueryHandler(set_voice))
+    app_bot.add_handler(MessageHandler(filters.VIDEO, process_video))
+    app_bot.run_polling()
 
 if __name__ == "__main__":
     main()
+
 
 
