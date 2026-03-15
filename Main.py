@@ -38,7 +38,7 @@ async def handle_interaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif query.data.startswith('v_'):
         context.user_data['voice'] = query.data.replace('v_', '')
         mode = context.user_data.get('mode', 'tts')
-        msg = "✍️ Soo dir qoraal:" if mode == 'tts' else "🎥 Soo dir Video gaaban (Hoos u dhig tayada):"
+        msg = "✍️ Soo dir qoraal:" if mode == 'tts' else "🎥 Soo dir Video gaaban:"
         await query.edit_message_text(f"✅ Diyaar. {msg}")
 
 async def process(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -47,34 +47,22 @@ async def process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     voice = context.user_data.get('voice', 'so-SO-MuuseNeural')
     
     if mode == 'translate' and update.message.video:
-        wait = await update.message.reply_text("⏳ Farsamaynta waa la bilaabay... (Fadlan sug)")
+        wait = await update.message.reply_text("⏳ Farsamaynta waa la bilaabay...")
         v_in, a_som, v_out = f"i_{user_id}.mp4", f"a_{user_id}.mp3", f"o_{user_id}.mp4"
-        
         try:
             file = await update.message.video.get_file()
             await file.download_to_drive(v_in)
-            
-            # Samee Codka Soomaaliga ah
-            communicate = edge_tts.Communicate("Muuqaal turjuman oo uu diyaariyay Liibaan Abdi.", voice)
-            await asyncio.wait_for(communicate.save(a_som), timeout=30)
-            
-            # Adeegso FFMPEG (RAM-ka aad buu ugu yar yahay)
-            cmd = [
-                'ffmpeg', '-y', '-i', v_in, '-i', a_som,
-                '-filter_complex', '[0:a]volume=0.2[a1];[1:a]volume=1.0[a2];[a1][a2]amix=inputs=2:duration=first[aout]',
-                '-map', '0:v', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-shortest', v_out
-            ]
+            communicate = edge_tts.Communicate("Muuqaal turjuman ooy diyaarisay Liibaan Tech.", voice)
+            await communicate.save(a_som)
+            cmd = ['ffmpeg', '-y', '-i', v_in, '-i', a_som, '-filter_complex', '[0:a]volume=0.2[a1];[1:a]volume=1.0[a2];[a1][a2]amix=inputs=2:duration=first[aout]', '-map', '0:v', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-shortest', v_out]
             subprocess.run(cmd, check=True)
-
-            await update.message.reply_video(video=open(v_out, 'rb'), caption=f"✅ Lagu guuleystay!\nBy: {ADMIN_USERNAME}")
-        except Exception as e:
-            logging.error(f"Error: {e}")
-            await update.message.reply_text("❌ Cilad baa dhacday. Video-gu waa inuu ka yaraado 10MB.")
+            await update.message.reply_video(video=open(v_out, 'rb'), caption=f"✅ Diyaar waaye!\nBy: {ADMIN_USERNAME}")
+        except Exception:
+            await update.message.reply_text("❌ Cilad baa dhacday. Video-gu waa inuu aad u yar yahay.")
         finally:
             for f in [v_in, a_som, v_out]:
                 if os.path.exists(f): os.remove(f)
             await wait.delete()
-
     elif mode == 'tts' and update.message.text:
         path = f"t_{user_id}.mp3"
         await edge_tts.Communicate(update.message.text, voice).save(path)
@@ -91,3 +79,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
