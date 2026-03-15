@@ -17,25 +17,25 @@ GROQ_API_KEY = "Gsk_mcqTsFbIaNys0SmGQbZJWGdyb3FY3vYKvky7uRu51jv05wPdJzwv"
 
 logging.basicConfig(level=logging.INFO)
 
-# Qalabka turjumada (Google Translate Free API)
+# Qalabka turjumada (Google Translate Free)
 def translate_to_somali(text):
     try:
         url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=so&dt=t&q={text}"
         r = requests.get(url)
         return "".join([s[0] for s in r.json()[0]])
     except:
-        return text # Haddii turjumadu fashilanto, hadalkii asalka ahaa uun isticmaal
+        return text
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("👩‍💼 Ubax (Dheddig)", callback_data='v_so-SO-UbaxNeural'), 
                  InlineKeyboardButton("👨‍💼 Muuse (Lab)", callback_data='v_so-SO-MuuseNeural')]]
-    await update.message.reply_text("👋 War dhowow! Dooro codka Soomaaliga ah ee lagu turjumayo:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("👋 War dhowow! Dooro codka Soomaaliga ah:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def set_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['voice'] = query.data.replace('v_', '')
-    await query.edit_message_text("✅ Diyaar! Hadda ii soo dir Video-ga Ingiriiska ah. Waxaan u turjumayaa Soomaali si automatic ah.")
+    await query.edit_message_text("✅ Diyaar! Hadda ii soo dir Video-ga (English). Si automatic ah ayaan u turjumayaa.")
 
 async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -52,7 +52,7 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 2. Extract Audio
         subprocess.run(['ffmpeg', '-y', '-i', v_in, '-ar', '16000', '-ac', '1', '-map', 'a', a_orig], check=True)
 
-        # 3. Whisper AI (Dhageysiga hadalka Ingiriiska ah)
+        # 3. Whisper AI (Dhageysi)
         with open(a_orig, "rb") as audio_file:
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
             files = {"file": audio_file, "model": (None, "whisper-large-v3"), "language": (None, "en")}
@@ -63,8 +63,6 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Wax hadal ah kama maqal video-ga.")
             return
 
-        await wait.edit_text(f"📝 Ingiriis: {english_text[:60]}...\n\n🔄 Hadda waxaan u turjumayaa Soomaali...")
-
         # 4. Turjumid (English to Somali)
         somali_text = translate_to_somali(english_text)
 
@@ -72,8 +70,7 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         communicate = edge_tts.Communicate(somali_text, voice)
         await communicate.save(a_som)
 
-        # 6. FFmpeg: Isku dar Video + Codka Soomaaliga (Tirtir codkii hore)
-        # Waxaan sidoo kale yaraynaynaa tayada si Render uusan u crash-gareyn
+        # 6. FFmpeg: Isku dar Video + Codka Cusub
         cmd = [
             'ffmpeg', '-y', '-i', v_in, '-i', a_som,
             '-map', '0:v:0', '-map', '1:a:0', 
@@ -84,8 +81,7 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_video(video=open(v_out, 'rb'), caption=f"✅ Turjumadii: {somali_text[:100]}...\n\nBy: @Liibaantech")
         
     except Exception as e:
-        logging.error(e)
-        await update.message.reply_text(f"❌ Khalad: Muuqaalka ayaa aad u weyn ama server-ka ayaa mashquul ah.")
+        await update.message.reply_text(f"❌ Cilad: Video-ga ayaa aad u weyn ama koodhka ayaa istaagay.")
     finally:
         for f in [v_in, a_orig, a_som, v_out]:
             if os.path.exists(f): os.remove(f)
@@ -101,6 +97,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
